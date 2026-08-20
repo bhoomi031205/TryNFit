@@ -5,7 +5,7 @@ const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || '';
 
 const apiClient = axios.create({
   baseURL: API_BASE_URL,
-  timeout: 180000, // 180 seconds (3 minutes) timeout for TryOn-API neural inference
+  timeout: 60000,
 });
 
 // Attach Supabase access token to requests if available
@@ -55,7 +55,7 @@ export const fetchHistory = async () => {
 };
 
 /**
- * Deletes a single try-on record by ID (0 AI API credits consumed)
+ * Deletes a single try-on record by ID
  */
 export const deleteHistoryItem = async (id) => {
   try {
@@ -70,7 +70,7 @@ export const deleteHistoryItem = async (id) => {
 };
 
 /**
- * Clears all try-on history (0 AI API credits consumed)
+ * Clears all try-on history
  */
 export const clearAllHistory = async () => {
   try {
@@ -86,12 +86,7 @@ export const clearAllHistory = async () => {
 
 /**
  * Sends person and garment images for TryOn-API Virtual Try-On
- * @param {Object} params
- * @param {File} params.personImage - User's portrait file
- * @param {File} params.garmentImage - Garment image file
- * @param {string} [params.category] - 'apparel' | 'auto' | 'tops' | 'bottoms' | 'one-pieces'
- * @param {string} [params.mode] - 'balanced' | 'quality' | 'performance'
- * @param {Function} [onUploadProgress] - Optional upload progress callback
+ * Uses async job submission + automatic polling so requests NEVER time out on Vercel
  */
 export const generateTryOn = async (
   { personImage, garmentImage, category = 'apparel', mode = 'balanced' },
@@ -103,16 +98,9 @@ export const generateTryOn = async (
   formData.append('category', category);
   formData.append('mode', mode);
 
-  if (import.meta.env.DEV) {
-    console.log('🚀 [TryOn-API Client Request Started]:', {
-      personFileName: personImage?.name,
-      garmentFileName: garmentImage?.name,
-      category,
-    });
-  }
-
   try {
-    const response = await apiClient.post('/api/tryon/generate', formData, {
+    // 1. Submit job asynchronously (< 1.5 seconds)
+    const submitResponse = await apiClient.post('/api/tryon/generate', formData, {
       headers: {
         'Content-Type': 'multipart/form-data',
       },
@@ -124,14 +112,49 @@ export const generateTryOn = async (
       },
     });
 
-    if (import.meta.env.DEV) {
-      console.log('📡 [TryOn-API Client Response Received]:', {
-        status: response.status,
-        resultUrl: response.data?.data?.resultUrl,
-      });
+    const initialData = submitResponse.data;
+
+    // Fast path: If result was returned immediately
+    if (initialData?.data?.resultUrl) {
+      return initialData;
     }
 
-    return response.data;
+    const jobId = initialData?.jobId || initialData?.id;
+    if (!jobId) {
+      throw new Error('No job identifier was returned by the try-on engine.');
+    }
+
+    // 2. Poll status endpoint every 2.5s until completed (bypasses all 504 serverless timeouts)
+    const maxPollAttempts = 40; // 40 * 2.5s = 100s max
+    const pollIntervalMs = 2500;
+
+    for (let attempt = 1; attempt <= maxPollAttempts; attempt++) {
+      await new Promise((resolve) => setTimeout(resolve, pollIntervalMs));
+
+      try {
+        const statusRes = await apiClient.get(`/api/tryon/status?jobId=${jobId}`);
+        const statusData = statusRes.data;
+
+        if (statusData?.status === 'completed' && statusData?.data?.resultUrl) {
+          return statusData;
+        }
+
+        if (statusData?.status === 'failed' || statusData?.error) {
+          const errPayload = statusData.error;
+          const errMsg = typeof errPayload === 'string' ? errPayload : errPayload?.message || 'Virtual try-on processing failed.';
+          const failErr = new Error(errMsg);
+          failErr.code = statusData.code || 'GENERATION_FAILED';
+          throw failErr;
+        }
+      } catch (pollErr) {
+        if (pollErr.code === 'GENERATION_FAILED' || pollErr.code === 'POSE_TRANSFER_FAILED' || pollErr.status === 400) {
+          throw pollErr;
+        }
+        console.warn(`[Poll attempt ${attempt}] status check notice:`, pollErr.message);
+      }
+    }
+
+    throw new Error('Virtual try-on processing took longer than expected. Please retry.');
   } catch (error) {
     if (import.meta.env.DEV) {
       console.error('❌ [TryOn-API Client Error]:', error.response?.data || error.message);
@@ -146,25 +169,17 @@ export const generateTryOn = async (
       throw customError;
     }
 
+    if (error.code && error.message) {
+      throw error;
+    }
+
     if (error.response?.status === 502 || error.response?.status === 503 || error.response?.status === 504) {
-      const gatewayError = new Error('The try-on model service is temporarily busy or unavailable (HTTP 502/503). Please retry in a few moments.');
+      const gatewayError = new Error('The try-on model service is temporarily busy. Please retry in a few moments.');
       gatewayError.code = 'SERVICE_UNAVAILABLE';
       gatewayError.status = error.response.status;
       throw gatewayError;
     }
 
-    if (error.code === 'ECONNABORTED') {
-      const timeoutError = new Error('The try-on generation request timed out. Processing took longer than 120 seconds.');
-      timeoutError.code = 'TIMEOUT';
-      throw timeoutError;
-    }
-
-    if (error.message === 'Network Error') {
-      const netError = new Error('Cannot connect to the TryNFit server. Please ensure the backend is running.');
-      netError.code = 'NETWORK_ERROR';
-      throw netError;
-    }
-
-    throw new Error('An unexpected error occurred during virtual try-on. Please try again.');
+    throw new Error(error.message || 'An unexpected error occurred during virtual try-on.');
   }
 };

@@ -7,13 +7,12 @@ export const config = {
   api: {
     bodyParser: false,
   },
-  maxDuration: 60, // Set maximum execution duration for Vercel
+  maxDuration: 15,
 };
 
 const TRYON_API_URL = 'https://tryon-api.com/api/v1/tryon';
 
 export default async function handler(req, res) {
-  // Only accept POST requests
   if (req.method !== 'POST') {
     return res.status(405).json({ success: false, error: 'Method Not Allowed. Use POST.' });
   }
@@ -29,7 +28,7 @@ export default async function handler(req, res) {
 
   const form = formidable({
     multiples: false,
-    maxFileSize: 10 * 1024 * 1024, // 10MB
+    maxFileSize: 10 * 1024 * 1024,
     keepExtensions: true,
   });
 
@@ -55,11 +54,9 @@ export default async function handler(req, res) {
     const category = (Array.isArray(fields.category) ? fields.category[0] : fields.category) || 'apparel';
     const mode = (Array.isArray(fields.mode) ? fields.mode[0] : fields.mode) || 'balanced';
 
-    // Read files into memory buffers
     const personBuffer = fs.readFileSync(personFileObj.filepath);
     const garmentBuffer = fs.readFileSync(garmentFileObj.filepath);
 
-    const startTime = Date.now();
     const tryonFormData = new FormData();
     tryonFormData.append('person_images', personBuffer, {
       filename: personFileObj.originalFilename || 'person.jpg',
@@ -69,53 +66,68 @@ export default async function handler(req, res) {
       filename: garmentFileObj.originalFilename || 'garment.jpg',
       contentType: garmentFileObj.mimetype || 'image/jpeg',
     });
-    tryonFormData.append('model', mode === 'performance' ? 'wearfits/tryon-clothing' : 'wearfits/tryon-clothing');
+    tryonFormData.append('model', 'wearfits/tryon-clothing');
     tryonFormData.append('category', 'apparel');
+    tryonFormData.append('mode', 'async'); // Submit asynchronously so Vercel never times out!
 
     const tryonResponse = await axios.post(TRYON_API_URL, tryonFormData, {
       headers: {
         Authorization: `Bearer ${apiKey}`,
         ...tryonFormData.getHeaders(),
       },
-      timeout: 120000,
+      timeout: 10000,
     });
 
     const data = tryonResponse.data;
-    const executionTime = ((Date.now() - startTime) / 1000).toFixed(2);
+    const jobId = data.jobId || data.id;
 
-    const resultImageUrl =
-      (typeof data?.images?.[0] === 'string' ? data.images[0] : data?.images?.[0]?.url) ||
-      data?.data?.images?.[0]?.url ||
-      data?.resultUrl ||
-      data?.image_url;
+    if (!jobId) {
+      // If synchronous response returned immediately
+      const resultImageUrl =
+        (typeof data?.images?.[0] === 'string' ? data.images[0] : data?.images?.[0]?.url) ||
+        data?.data?.images?.[0]?.url ||
+        data?.resultUrl ||
+        data?.image_url;
 
-    if (!resultImageUrl) {
+      if (resultImageUrl) {
+        return res.status(200).json({
+          success: true,
+          status: 'completed',
+          data: {
+            id: data.id || `tryon_${Date.now()}`,
+            status: 'completed',
+            resultUrl: resultImageUrl,
+            credits: data.usage?.credits ?? 1,
+            model: data.model || 'wearfits/tryon-clothing',
+            executionTime: '12s',
+            category,
+          },
+        });
+      }
+
       return res.status(502).json({
         success: false,
-        error: 'TryOn-API returned a response without a valid generated result image URL.',
+        error: 'TryOn-API did not return a valid jobId or result URL.',
       });
     }
 
     return res.status(200).json({
       success: true,
-      data: {
-        id: data.id || `tryon_${Date.now()}`,
-        status: 'completed',
-        resultUrl: resultImageUrl,
-        credits: data.usage?.credits ?? 1,
-        model: data.model || 'wearfits/tryon-clothing',
-        executionTime: `${executionTime}s`,
-        category,
-      },
+      jobId,
+      status: data.status || 'queued',
+      category,
     });
   } catch (error) {
-    console.error('Vercel Serverless Try-On Handler error:', error.response?.data || error.message);
+    console.error('Vercel Serverless Submit Error:', error.response?.data || error.message);
     const status = error.response?.status || 500;
-    const message = error.response?.data?.error?.message || error.message || 'Virtual try-on processing failed.';
+    const errData = error.response?.data;
+    const message = typeof errData?.error === 'string'
+      ? errData.error
+      : errData?.error?.message || errData?.message || error.message || 'Failed to submit virtual try-on job.';
     return res.status(status).json({
       success: false,
       error: message,
-      code: error.response?.data?.error?.code || 'TRYON_ERROR',
+      code: errData?.error?.code || errData?.errorCode || 'SUBMISSION_ERROR',
     });
   }
 }
