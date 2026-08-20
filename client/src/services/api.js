@@ -138,8 +138,10 @@ export const generateTryOn = async (
     }
 
     if (error.response?.data?.error) {
-      const customError = new Error(error.response.data.error);
-      customError.code = error.response.data.code || 'SERVICE_ERROR';
+      const errPayload = error.response.data.error;
+      const errMsg = typeof errPayload === 'string' ? errPayload : errPayload.message || JSON.stringify(errPayload);
+      const customError = new Error(errMsg);
+      customError.code = error.response.data.code || errPayload.code || 'SERVICE_ERROR';
       customError.status = error.response.status;
       throw customError;
     }

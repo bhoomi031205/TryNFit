@@ -4,8 +4,22 @@ import { AlertTriangle, X, RefreshCw, HelpCircle } from 'lucide-react';
 export const ErrorAlert = ({ error, onDismiss, onRetry }) => {
   if (!error) return null;
 
-  const errorMessage = typeof error === 'string' ? error : error.message || 'An error occurred.';
-  const errorCode = error.code || 'UNKNOWN_ERROR';
+  const extractMessage = (err) => {
+    if (!err) return 'An error occurred.';
+    if (typeof err === 'string') return err;
+    if (typeof err.message === 'string') return err.message;
+    if (err.message && typeof err.message === 'object') {
+      return err.message.message || JSON.stringify(err.message);
+    }
+    if (typeof err.error === 'string') return err.error;
+    if (err.error && typeof err.error === 'object') {
+      return err.error.message || JSON.stringify(err.error);
+    }
+    return JSON.stringify(err);
+  };
+
+  const errorMessage = extractMessage(error);
+  const errorCode = error?.code || 'SERVICE_ERROR';
 
   // Helpful contextual recovery suggestion based on error code
   let suggestion = 'Please verify your uploads and try again.';
