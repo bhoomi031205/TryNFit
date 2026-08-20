@@ -200,12 +200,16 @@ export const StudioPage = () => {
         try {
           const newLookItem = {
             ...(response.data.historyItem || response.data),
-            personPreview: pPreview || response.data.personPreview,
-            garmentPreview: gPreview || response.data.garmentPreview,
+            resultUrl: response.data.resultUrl,
+            personPreview: personPreview || response.data.personPreview,
+            garmentPreview: garmentPreview || response.data.garmentPreview,
+            title: `Try-On #${(savedLooks?.length || 0) + 1}`,
+            date: new Date().toISOString(),
+            createdAt: new Date().toISOString(),
           };
           addSavedLook(newLookItem);
         } catch (historyErr) {
-          console.warn('History UI sync warning (non-fatal):', historyErr);
+          console.warn('History UI sync warning:', historyErr);
         }
       } else {
         throw new Error('Virtual try-on completed but no image URL was returned.');

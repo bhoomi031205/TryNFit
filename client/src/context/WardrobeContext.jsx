@@ -122,8 +122,10 @@ export const WardrobeProvider = ({ children }) => {
       const exists = prev.some((item) => item.id === finalLook.id || item.resultUrl === finalLook.resultUrl);
       if (exists) return prev;
       const updated = [finalLook, ...prev];
-      if (!user?.isSupabaseUser) {
+      try {
         localStorage.setItem(LOCAL_WARDROBE_KEY, JSON.stringify(updated));
+      } catch (e) {
+        console.warn('Local storage cache note:', e);
       }
       return updated;
     });
