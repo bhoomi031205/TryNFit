@@ -1,0 +1,17 @@
+{
+  "name": "trynfit",
+  "version": "1.0.0",
+  "private": true,
+  "description": "TryNFit — AI Virtual Try-On Platform",
+  "scripts": {
+    "dev": "concurrently -n \"SERVER,CLIENT\" -c \"blue,magenta\" \"npm run dev:server\" \"npm run dev:client\"",
+    "dev:server": "npm --prefix server run dev",
+    "dev:client": "npm --prefix client run dev",
+    "install:all": "npm install && npm --prefix server install && npm --prefix client install",
+    "build:client": "npm --prefix client run build",
+    "start:server": "npm --prefix server start"
+  },
+  "devDependencies": {
+    "concurrently": "^8.2.2"
+  }
+}
