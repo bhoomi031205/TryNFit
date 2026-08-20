@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { BrowserRouter as Router, Routes, Route, useLocation, Navigate } from 'react-router-dom';
+import { Analytics } from '@vercel/analytics/react';
 import { AuthProvider } from './context/AuthContext';
 import { WardrobeProvider } from './context/WardrobeContext';
 import { Navbar } from './components/Navbar';
@@ -62,6 +63,8 @@ export const App = () => {
             {/* Footer */}
             <Footer />
           </div>
+          {/* Vercel Web Analytics */}
+          <Analytics />
         </Router>
       </WardrobeProvider>
     </AuthProvider>
